@@ -1,7 +1,6 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const nodemailer = require('nodemailer');
 const { google } = require('googleapis');
 const crypto = require('crypto');
 const dotenv = require('dotenv');
@@ -151,9 +150,9 @@ const requireAdminKey = (req, res, next) => {
   next();
 };
 
-/* ------------------------- Gmail transporter ------------------------- */
+/* ------------------------- Gmail API client ------------------------- */
 
-const createTransporter = async () => {
+const createGmailClient = async () => {
   const requiredVariables = [
     'GOOGLE_CLIENT_ID',
     'GOOGLE_CLIENT_SECRET',
@@ -192,30 +191,40 @@ const createTransporter = async () => {
     throw new Error('Google did not return an OAuth access token.');
   }
 
-  console.log('Creating Gmail transporter on SMTP port 587...');
+  console.log('Gmail OAuth access token obtained');
 
-  const transporter = nodemailer.createTransport({
-    host: 'smtp.gmail.com',
-    port: 587,
-    secure: false,
-    requireTLS: true,
-    auth: {
-      type: 'OAuth2',
-      user: process.env.GOOGLE_USER_EMAIL,
-      clientId: process.env.GOOGLE_CLIENT_ID,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-      refreshToken: process.env.GOOGLE_REFRESH_TOKEN,
-      accessToken,
-    },
-    connectionTimeout: 15000,
-    greetingTimeout: 15000,
-    socketTimeout: 30000,
+  return google.gmail({
+    version: 'v1',
+    auth: oAuth2Client,
   });
+};
 
-  await transporter.verify();
-  console.log('Gmail transporter verified');
+const encodeEmailHeader = (value) =>
+  `=?UTF-8?B?${Buffer.from(String(value), 'utf8').toString('base64')}?=`;
 
-  return transporter;
+const createRawEmail = ({ recipient, subject, text, unsubscribeUrl }) => {
+  const replyTo =
+    process.env.REPLY_TO_EMAIL || process.env.GOOGLE_USER_EMAIL;
+
+  const message = [
+    `From: ${encodeEmailHeader('Aarya from 3D Spot')} <${process.env.GOOGLE_USER_EMAIL}>`,
+    `Reply-To: ${replyTo}`,
+    `To: ${recipient}`,
+    `Subject: ${encodeEmailHeader(subject)}`,
+    'MIME-Version: 1.0',
+    'Content-Type: text/plain; charset=UTF-8',
+    'Content-Transfer-Encoding: 8bit',
+    `List-Unsubscribe: <${unsubscribeUrl}>`,
+    'List-Unsubscribe-Post: List-Unsubscribe=One-Click',
+    '',
+    text,
+  ].join('\r\n');
+
+  return Buffer.from(message, 'utf8')
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
 };
 
 /* ------------------------- Email records ------------------------- */
@@ -251,7 +260,7 @@ const getOrCreateEmailRecord = async (emailAddress) => {
 /* ------------------------- Campaign sending ------------------------- */
 
 const sendCampaign = async ({ recipients, subject, emailBody }) => {
-  const transporter = await createTransporter();
+  const gmail = await createGmailClient();
 
   let sent = 0;
   let failed = 0;
@@ -283,16 +292,17 @@ const sendCampaign = async ({ recipients, subject, emailBody }) => {
         `Unsubscribe: ${unsubscribeUrl}`,
       ].join('\n');
 
-      await transporter.sendMail({
-        from: `"Aarya from 3D Spot" <${process.env.GOOGLE_USER_EMAIL}>`,
-        replyTo:
-          process.env.REPLY_TO_EMAIL || process.env.GOOGLE_USER_EMAIL,
-        to: recipient,
+      const raw = createRawEmail({
+        recipient,
         subject,
         text: completeEmailBody,
-        headers: {
-          'List-Unsubscribe': `<${unsubscribeUrl}>`,
-          'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+        unsubscribeUrl,
+      });
+
+      await gmail.users.messages.send({
+        userId: 'me',
+        requestBody: {
+          raw,
         },
       });
 
