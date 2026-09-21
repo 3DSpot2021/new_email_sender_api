@@ -192,8 +192,13 @@ const createTransporter = async () => {
     throw new Error('Google did not return an OAuth access token.');
   }
 
+  console.log('Creating Gmail transporter on SMTP port 587...');
+
   const transporter = nodemailer.createTransport({
-    service: 'gmail',
+    host: 'smtp.gmail.com',
+    port: 587,
+    secure: false,
+    requireTLS: true,
     auth: {
       type: 'OAuth2',
       user: process.env.GOOGLE_USER_EMAIL,
@@ -202,9 +207,13 @@ const createTransporter = async () => {
       refreshToken: process.env.GOOGLE_REFRESH_TOKEN,
       accessToken,
     },
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
+    socketTimeout: 30000,
   });
 
   await transporter.verify();
+  console.log('Gmail transporter verified');
 
   return transporter;
 };
