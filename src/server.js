@@ -18,15 +18,29 @@ let campaignRunning = false;
 
 /* ------------------------- Middleware ------------------------- */
 
+
+app.use(express.json({ limit: '2mb' }));
+const allowedOrigins = [
+  'http://localhost:3000',
+  'https://email-sender-ui-mauve.vercel.app',
+];
+
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
-    methods: ['GET', 'POST'],
+    origin(origin, callback) {
+      const isVercelDeployment =
+        origin && /^https:\/\/[a-zA-Z0-9-]+\.vercel\.app$/.test(origin);
+
+      if (!origin || allowedOrigins.includes(origin) || isVercelDeployment) {
+        return callback(null, true);
+      }
+
+      return callback(new Error(`CORS blocked origin: ${origin}`));
+    },
+    methods: ['GET', 'POST', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'x-admin-key'],
   })
 );
-
-app.use(express.json({ limit: '2mb' }));
 
 /* ------------------------- MongoDB model ------------------------- */
 
